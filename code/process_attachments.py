@@ -7,10 +7,12 @@ import json
 from openpyxl import load_workbook
 import requests
 
-
-DATA_DIR = "/Users/hua/Desktop/my-code/cosmic_data/data_file"
-DEEPSEEK_API_KEY = "sk-e59e19d1305c4fbf8e4833e0f26b2ceb"
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+try:
+    from config import DATA_DIR, DEEPSEEK_API_KEY, DEEPSEEK_API_URL
+except ImportError:
+    print("错误：未找到配置文件 config.py")
+    print("请复制 config_template.py 为 config.py 并填入正确的配置信息")
+    exit(1)
 
 
 def print_step(title: str) -> None:
