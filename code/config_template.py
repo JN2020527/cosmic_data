@@ -5,5 +5,5 @@
 DEEPSEEK_API_KEY = "your-deepseek-api-key-here"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# 数据目录配置
-DATA_DIR = "/path/to/your/data_file"  # 修改为你的数据文件目录路径 
+# 数据目录配置 - 推荐使用相对路径
+DATA_DIR = "../data_file"  # 相对于当前脚本的路径，指向 data_file 目录 

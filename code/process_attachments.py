@@ -19,6 +19,9 @@ def print_step(title: str) -> None:
     print(f"==== {title} ====")
 
 
+# 已删除 move_paragraph_after_index 函数，使用更简单的直接插入方法
+
+
 def parse_attachment_filename(filename: str) -> Optional[Tuple[str, str, str, str]]:
     """
     Parse filenames like: 附件x-需求名@属性.扩展名
@@ -485,30 +488,54 @@ def parse_ai_function_matches(ai_response: str, function_codes: List[Tuple[str, 
     return matches
 
 
-def match_functions_with_ai(requirement_content: str, function_codes: List[Tuple[str, str, str]], total_workload: float) -> List[Tuple[str, str, str, str, float]]:
+def parse_requirement_items(a4_content: str) -> List[str]:
+    """解析A4单元格内容，提取各个独立的功能点"""
+    content = str(a4_content).strip()
+    
+    # 找到所有编号的行（1. 2. 3. 等）
+    import re
+    lines = content.split('\n')
+    items = []
+    
+    for line in lines:
+        line = line.strip()
+        # 匹配数字开头的功能点
+        match = re.match(r'^\d+\.\s*(.+)$', line)
+        if match:
+            item_text = match.group(1).strip()
+            if item_text:
+                items.append(item_text)
+    
+    return items
+
+
+def match_functions_with_ai(requirement_items: List[str], function_codes: List[Tuple[str, str, str]], total_workload: float) -> List[Tuple[str, str, str, str, float]]:
     """使用AI匹配需求内容与功能点码值"""
     codes_text = "\n".join([f"{i+1}. {l1} -> {l2} -> {l3}" for i, (l1, l2, l3) in enumerate(function_codes)])
     
-    prompt = f"""基于以下需求内容，从功能点码值中选择最恰当的功能点进行匹配。
+    items_text = "\n".join([f"{i+1}. {item}" for i, item in enumerate(requirement_items)])
+    
+    prompt = f"""基于以下具体需求功能点，从功能点码值中选择最恰当的功能点进行匹配。
 
-需求内容：
-{requirement_content}
+具体需求功能点：
+{items_text}
 
 可用功能点码值：
 {codes_text}
 
 请按照以下格式返回匹配结果，每行一个匹配项：
-功能点编号|一级功能点|二级功能点|三级功能点|功能描述|工作量估计
+功能点编号|一级功能点|二级功能点|三级功能点|对应的需求功能点描述|工作量估计
 
 要求：
-1. 根据需求内容的复杂度，选择2-3个最相关的功能点，最多选择5个
-2. 为每个功能点提供简洁的功能描述（从需求内容中提取相关部分）
+1. 为每个需求功能点选择最相关的功能点码值
+2. 在"对应的需求功能点描述"字段中，填入相关的原始需求功能点内容
 3. 根据功能复杂度估计工作量（人天），总和应接近{total_workload}人天
 4. 功能点编号从1开始递增
 
 示例格式：
-1|市场洞察|建筑视角|建筑查询|实现建筑信息查询功能|3.0
-2|...|...|...|...|..."""
+1|市场洞察|建筑视角|建筑查询|重构PC端任务流UI样式，并基于APP端样例和UI设计输出静态代码及建设页面|6.0
+2|客户管控|客户视角|客户查询|调整过程表记录规则，仅保留创建、提交工单和审批环节|7.0
+3|...|...|...|...|...|..."""
 
     headers = {
         "Content-Type": "application/json",
@@ -553,6 +580,495 @@ def match_functions_with_ai(requirement_content: str, function_codes: List[Tuple
         raise Exception(error_msg)
 
 
+def initialize_attachment1() -> None:
+    """初始化附件1，清除之前生成的项目文档内容，并重新添加标注"""
+    print_step("初始化：清理附件1中之前生成的项目文档内容，并重新添加标注")
+    
+    path1 = find_attachment_by_number(1)
+    if not path1:
+        print("未找到附件1文件")
+        return
+    
+    try:
+        from docx import Document
+        
+        doc = Document(path1)
+        print(f"文档总段落数: {len(doc.paragraphs)}")
+        
+        # 识别需要清理的内容模式
+        content_patterns = [
+            "项目背景和概述：",
+            "主要功能模块：", 
+            "技术架构特点：",
+            "具体目标和预期效果：",
+            "业务价值和意义：",
+            "用户体验提升：",
+            "现有系统的不足：",
+            "业务发展需要：",
+            "技术升级必要性：",
+            "当前系统存在的具体问题：",
+            "用户使用痛点：",
+            "技术或流程缺陷："
+        ]
+        
+        # 查找需要删除的段落
+        paragraphs_to_remove = []
+        
+        for i, paragraph in enumerate(doc.paragraphs):
+            text = paragraph.text.strip()
+            
+            # 检查是否包含我们生成的内容特征
+            for pattern in content_patterns:
+                if pattern in text:
+                    paragraphs_to_remove.append((i, text[:50] + "..."))
+                    break
+        
+        print(f"找到 {len(paragraphs_to_remove)} 个需要清理的段落")
+        
+        # 从后往前删除，避免索引偏移
+        for i, text_preview in reversed(paragraphs_to_remove):
+            print(f"删除第{i}行: {text_preview}")
+            p = doc.paragraphs[i]
+            p._element.getparent().remove(p._element)
+        
+        if paragraphs_to_remove:
+            try:
+                print(f"✅ 已清理附件1中的 {len(paragraphs_to_remove)} 个生成内容段落")
+                cleaned = True
+            except PermissionError:
+                print("⚠️  文件被占用，无法保存。请关闭Word文档后重试")
+                print(f"💡 已识别到 {len(paragraphs_to_remove)} 个需要清理的段落，但无法自动清理")
+                print("💡 建议：关闭Word文档后重新运行程序")
+                return
+        else:
+            print("✅ 附件1中没有找到需要清理的内容")
+            cleaned = False
+        
+        # 重新添加标注，确保第十一步能找到插入位置
+        # 注意：只在正文章节添加标注，不在目录中添加
+        print("重新添加章节标注...")
+        section_mappings = {
+            "1.1": "总体描述",
+            "1.2": "项目建设目标", 
+            "1.3": "项目建设必要性",
+            "2.3": "存在问题"
+        }
+        
+        # 检查现有的章节标识
+        annotations_found = 0
+        for section_num, section_name in section_mappings.items():
+            found = False
+            for i, paragraph in enumerate(doc.paragraphs):
+                text = paragraph.text.strip()
+                
+                # 直接查找章节标识格式
+                if (text == f"{section_name}（添加标识）" or 
+                    text.startswith(f"{section_name}（") and "标识" in text or
+                    text == f"{section_num} {section_name}（添加标识）" or
+                    text.startswith(f"{section_num} {section_name}（") and "标识" in text):
+                    print(f"✅ 找到 {section_num} {section_name} 标识")
+                    annotations_found += 1
+                    found = True
+                    break
+            
+            if not found:
+                print(f"⚠️  未找到 {section_num} {section_name} 标识")
+        
+        # 检查是否所有章节都有标识
+        if annotations_found < 4:
+            print(f"⚠️  只找到 {annotations_found} 个章节标识，应该有4个")
+            print("💡 请确保正文中包含所有必需的章节标识")
+        else:
+            print(f"✅ 所有 {annotations_found} 个章节标识都已就绪")
+        
+        # 保存文档
+        try:
+            doc.save(path1)
+            if annotations_found > 0:
+                print(f"✅ 已检查 {annotations_found} 个章节标识")
+            print("✅ 附件1初始化完成，已准备好接收新内容")
+        except PermissionError:
+            print("⚠️  文件被占用，无法保存标注。请关闭Word文档后重试")
+        
+    except ImportError:
+        print("⚠️  未安装python-docx，跳过附件1初始化")
+    except PermissionError:
+        print("⚠️  文件被占用，无法访问附件1。请关闭Word文档后重试")
+    except Exception as e:
+        print(f"⚠️  附件1初始化失败：{e}")
+
+
+def initialize_attachment2() -> None:
+    """初始化附件2，清空数据仅保留标题行"""
+    print_step("初始化：清空附件2数据，仅保留标题行")
+    
+    path2 = find_attachment_by_number(2)
+    if not path2:
+        print("未找到附件2文件")
+        return
+    
+    try:
+        wb2 = load_workbook(path2)
+        ws2 = wb2.active
+        
+        # 取消所有合并的单元格
+        merged_ranges = list(ws2.merged_cells.ranges)
+        for merged_range in merged_ranges:
+            ws2.unmerge_cells(str(merged_range))
+        
+        # 清空除标题行外的所有数据（从第2行开始）
+        max_row = ws2.max_row if ws2.max_row else 1
+        max_col = ws2.max_column if ws2.max_column else 7
+        
+        # 清空数据行（保留第1行标题）
+        for row in range(2, max_row + 10):  # 多清理几行确保完全清空
+            for col in range(1, max_col + 1):
+                ws2.cell(row, col).value = None
+                # 清除格式
+                ws2.cell(row, col).alignment = None
+                # 清除边框
+                ws2.cell(row, col).border = None
+        
+        # 清除标题行的边框（恢复到初始状态）
+        for col in range(1, max_col + 1):
+            ws2.cell(1, col).border = None
+        
+        wb2.save(path2)
+        print(f"已清空 {os.path.basename(path2)}，保留标题行")
+        
+    except Exception as e:
+        print(f"初始化附件2失败：{e}")
+        raise
+
+
+def generate_project_documentation(requirement_content: str) -> dict:
+    """基于需求内容生成项目文档的四个部分"""
+    
+    prompt = f"""基于以下具体需求内容，生成完整的项目文档。
+
+具体需求内容：
+{requirement_content}
+
+请生成以下四个部分的内容：
+
+1. 总体描述：
+   - 项目背景和概述
+   - 主要功能模块
+   - 技术架构特点
+
+2. 项目建设目标：
+   - 具体目标和预期效果
+   - 业务价值和意义
+   - 用户体验提升
+
+3. 项目建设必要性：
+   - 现有系统的不足
+   - 业务发展需要
+   - 技术升级必要性
+
+4. 存在问题：
+   - 当前系统存在的具体问题
+   - 用户使用痛点
+   - 技术或流程缺陷
+
+请确保内容专业、具体，与具体需求高度相关。每个部分应该有2-3个要点，每个要点100-200字。
+
+返回格式：
+总体描述：
+1. ...
+2. ...
+3. ...
+
+项目建设目标：
+1. ...
+2. ...
+3. ...
+
+项目建设必要性：
+1. ...
+2. ...
+3. ...
+
+存在问题：
+1. ...
+2. ...
+3. ..."""
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+    }
+    
+    data = {
+        "model": "deepseek-chat",
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": 2000,
+        "temperature": 0.7
+    }
+    
+    try:
+        print("正在调用DeepSeek API生成项目文档...")
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
+        
+        if response.status_code != 200:
+            error_msg = f"API调用失败，状态码: {response.status_code}"
+            print(error_msg)
+            raise Exception(error_msg)
+        
+        result = response.json()
+        
+        if 'choices' in result and len(result['choices']) > 0:
+            ai_response = result['choices'][0]['message']['content'].strip()
+            print("✅ 项目文档生成成功")
+            
+            # 解析AI响应为字典
+            sections = {
+                "总体描述": "",
+                "项目建设目标": "",
+                "项目建设必要性": "",
+                "存在问题": ""
+            }
+            
+            current_section = None
+            lines = ai_response.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if line.endswith('：') and line[:-1] in sections:
+                    current_section = line[:-1]
+                    sections[current_section] = ""
+                elif current_section and line:
+                    if sections[current_section]:
+                        sections[current_section] += '\n' + line
+                    else:
+                        sections[current_section] = line
+            
+            return sections
+        else:
+            error_msg = "API响应格式错误"
+            print(error_msg)
+            raise Exception(error_msg)
+            
+    except Exception as e:
+        error_msg = f"生成项目文档失败：{e}"
+        print(error_msg)
+        raise Exception(error_msg)
+
+
+def update_attachment1_with_project_docs(project_docs: dict) -> None:
+    """更新附件1中的项目文档部分"""
+    print("更新附件1中的项目文档部分...")
+    
+    path1 = find_attachment_by_number(1)
+    if not path1:
+        print("未找到附件1文件")
+        return
+    
+    try:
+        # 由于Word文档更新比较复杂且容易出错，我们采用备选方案
+        # 直接生成格式化的文本文件供用户手动复制
+        
+        output_file = os.path.join(os.path.dirname(__file__), "项目文档更新内容.txt")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write("附件1项目文档更新内容\n")
+            f.write("="*60 + "\n\n")
+            f.write("请将以下内容手动复制到附件1的对应章节：\n\n")
+            
+            section_mappings = {
+                "1.1": "总体描述",
+                "1.2": "项目建设目标", 
+                "1.3": "项目建设必要性",
+                "2.3": "存在问题"
+            }
+            
+            for section_num, section_name in section_mappings.items():
+                if section_name in project_docs and project_docs[section_name].strip():
+                    f.write(f"【{section_num} {section_name}】\n")
+                    f.write("-" * 40 + "\n")
+                    
+                    # 格式化内容，每个要点分段显示
+                    content = project_docs[section_name].strip()
+                    lines = content.split('\n')
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            f.write(line + "\n\n")
+                    
+                    f.write("\n")
+        
+        print(f"✅ 项目文档内容已保存到：{output_file}")
+        print("📋 请手动执行以下步骤：")
+        print("   1. 打开附件1的Word文档")
+        print("   2. 找到对应的章节（1.1、1.2、1.3、2.3）")
+        print("   3. 将文本文件中的内容复制到对应章节下")
+        print("   4. 保存Word文档")
+        
+        # 同时尝试自动更新（如果可能的话）
+        try:
+            from docx import Document
+            
+            print("\n尝试自动更新Word文档...")
+            doc = Document(path1)
+            
+            section_mappings = {
+                "1.1": "总体描述",
+                "1.2": "项目建设目标", 
+                "1.3": "项目建设必要性",
+                "2.3": "存在问题"
+            }
+            
+            updated_sections = []
+            
+            # 只支持章节标识格式
+            section_title_mappings = {
+                "1.1": "总体描述",
+                "1.2": "项目建设目标", 
+                "1.3": "项目建设必要性",
+                "2.3": "存在问题"
+            }
+            
+            print("查找章节标识...")
+            
+            # 直接查找章节标识
+            for i, paragraph in enumerate(doc.paragraphs):
+                text = paragraph.text.strip()
+                
+                # 查找带有标识的章节标题（支持两种格式）
+                for section_num, section_name in section_title_mappings.items():
+                    # 格式1: "1.1 总体描述（添加标识）"
+                    # 格式2: "总体描述（添加标识）"  
+                    if ((text.startswith(section_num) and section_name in text and ('添加标识' in text or '标识' in text or '（' in text)) or
+                        (text == f"{section_name}（添加标识）" or text.startswith(f"{section_name}（") and "标识" in text)):
+                        
+                        print(f"找到带标识的章节：第{i}行 - {text}")
+                        
+                        if section_name in project_docs:
+                            content = project_docs[section_name].strip()
+                            
+                            if content:
+                                # 在章节标题后添加内容
+                                lines = [line.strip() for line in content.split('\n') if line.strip()]
+                                
+                                # 使用更简单可靠的方法：直接在目标段落后面依次插入
+                                target_para = paragraph
+                                parent = target_para._element.getparent()
+                                target_element = target_para._element
+                                
+                                # 正序插入每一行内容
+                                insert_position = list(parent).index(target_element) + 1
+                                
+                                for line_idx, line in enumerate(lines):
+                                    # 创建新的段落元素
+                                    new_p = doc._body._element.makeelement('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+                                    # 创建文本运行
+                                    new_r = doc._body._element.makeelement('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                                    new_t = doc._body._element.makeelement('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                                    new_t.text = line
+                                    new_r.append(new_t)
+                                    new_p.append(new_r)
+                                    
+                                    # 插入到正确位置
+                                    parent.insert(insert_position + line_idx, new_p)
+                                
+                                updated_sections.append(section_name)
+                                print(f"✅ 已在章节 {section_num} 后添加 {len(lines)} 行内容")
+                                
+                                # 提前退出，避免重复处理
+                                break
+                        break
+            
+            # 禁用末尾添加功能，要求必须找到标注位置
+            if not updated_sections:
+                print("❌ 未找到任何用户标注位置")
+                print("💡 请确保文档中包含以下格式的章节标识：")
+                print("   • 1.1 总体描述（添加标识）")
+                print("   • 总体描述（添加标识）")
+                print("   • 1.2 项目建设目标（添加标识）")
+                print("   • 项目建设目标（添加标识）")
+                print("   • 1.3 项目建设必要性（添加标识）")
+                print("   • 项目建设必要性（添加标识）")
+                print("   • 2.3 存在问题（添加标识）")
+                print("   • 存在问题（添加标识）")
+                print("⚠️  不允许在文档末尾添加内容，必须在指定位置插入")
+                return
+            
+            if updated_sections:
+                doc.save(path1)
+                print(f"✅ Word文档自动更新成功，已替换标注：{', '.join(updated_sections)}")
+                print("💡 内容已精确插入到您标注的位置")
+            else:
+                print("⚠️  未找到用户标注位置，请检查标注格式")
+                print("💡 建议使用格式：总体描述（添加标识）、项目建设目标（添加标识）等")
+                
+        except Exception as auto_error:
+            print(f"⚠️  Word文档自动更新失败：{auto_error}")
+            print("请使用手动方式复制内容")
+        
+    except Exception as e:
+        print(f"生成文档内容失败：{e}")
+        import traceback
+        traceback.print_exc()
+
+
+def step11_generate_and_update_project_docs() -> None:
+    """第十一步：生成项目文档并更新附件1"""
+    print_step("第十一步：生成项目文档并更新附件1")
+    
+    try:
+        # 获取附件4的A4内容
+        path4 = find_attachment_by_number(4)
+        if not path4:
+            print("未找到附件4文件")
+            return
+        
+        wb4 = load_workbook(path4, data_only=True)
+        ws4 = wb4.active
+        a4_content = ws4['A4'].value
+        
+        if not a4_content:
+            print("附件4的A4单元格为空")
+            return
+        
+        print(f"提取到需求内容：{len(str(a4_content))} 字符")
+        
+        # 生成项目文档
+        project_docs = generate_project_documentation(str(a4_content))
+        
+        # 显示生成的内容
+        print("\n" + "="*80)
+        print("生成的项目文档内容：")
+        print("="*80)
+        
+        section_mappings = {
+            "1.1": "总体描述",
+            "1.2": "项目建设目标", 
+            "1.3": "项目建设必要性",
+            "2.3": "存在问题"
+        }
+        
+        for section_num, section_name in section_mappings.items():
+            if section_name in project_docs and project_docs[section_name].strip():
+                print(f"\n【{section_num} {section_name}】")
+                print("-" * 40)
+                print(project_docs[section_name])
+        
+        # 更新附件1
+        update_attachment1_with_project_docs(project_docs)
+        
+        print("\n✅ 第十一步完成：项目文档已生成并更新")
+        
+    except Exception as e:
+        print(f"第十一步执行失败：{e}")
+        print("程序终止，请检查API配置或网络连接")
+        raise
+
+
 def update_wbs_document() -> None:
     print_step("第十步：基于A4数据和功能点码值更新WBS工作量文档")
     
@@ -565,14 +1081,20 @@ def update_wbs_document() -> None:
         
         wb4 = load_workbook(path4, data_only=True)
         ws4 = wb4.active
-        a4_content = ws4['A4'].value
+        a4_content = ws4['A4'].value  # A4包含需求内容，也用作功能描述
         d7_workload = ws4['D7'].value or 19.0
         
         if not a4_content:
             print("附件4的A4单元格为空")
             return
         
+        # 解析A4内容，提取各个独立的功能点
+        requirement_items = parse_requirement_items(a4_content)
+        
         print(f"提取到需求内容：{len(str(a4_content))} 字符")
+        print(f"解析出 {len(requirement_items)} 个具体功能点：")
+        for i, item in enumerate(requirement_items, 1):
+            print(f"  {i}. {item}")
         print(f"工作量总和：{d7_workload} 人天")
         
         # 加载功能点码值
@@ -582,7 +1104,7 @@ def update_wbs_document() -> None:
             return
         
         # AI匹配功能点
-        matches = match_functions_with_ai(str(a4_content), function_codes, d7_workload)
+        matches = match_functions_with_ai(requirement_items, function_codes, d7_workload)
         
         if not matches:
             print("AI匹配失败，程序终止")
@@ -609,15 +1131,62 @@ def update_wbs_document() -> None:
             for col in range(1, 7):
                 ws2.cell(row, col).value = None
         
+        # 按功能点码值排序并合并相同功能点的描述
+        from collections import defaultdict
+        from openpyxl.styles import Alignment, Border, Side
+        
+        # 按功能点码值分组
+        grouped_matches = defaultdict(list)
+        for level1, level2, level3, description, workload in matches:
+            key = (level1, level2, level3)
+            grouped_matches[key].append((description, workload))
+        
+        # 按功能点码值排序
+        sorted_groups = sorted(grouped_matches.items())
+        
+        # 定义边框样式
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # 为标题行添加边框
+        for col in range(1, 7):
+            cell = ws2.cell(1, col)
+            cell.border = thin_border
+        
         # 填入匹配的功能点数据
         current_row = 2
-        for i, (level1, level2, level3, description, workload) in enumerate(matches):
+        for (level1, level2, level3), items in sorted_groups:
+            # 合并所有描述，用换行符分隔，并添加序号
+            combined_descriptions = []
+            total_workload = 0
+            
+            for i, (description, workload) in enumerate(items, 1):
+                # 为每个描述添加序号
+                numbered_description = f"{i}. {description}"
+                combined_descriptions.append(numbered_description)
+                total_workload += workload
+            
+            # 用换行符连接所有描述
+            combined_description = '\n'.join(combined_descriptions)
+            
             ws2.cell(current_row, 1).value = f"=ROW()-1"  # 编号使用公式
             ws2.cell(current_row, 2).value = level1  # 一级功能点
             ws2.cell(current_row, 3).value = level2  # 二级功能点
             ws2.cell(current_row, 4).value = level3  # 三级功能点
-            ws2.cell(current_row, 5).value = description  # 功能描述
-            ws2.cell(current_row, 6).value = workload  # 工作量
+            ws2.cell(current_row, 5).value = combined_description  # 合并的功能描述
+            ws2.cell(current_row, 6).value = total_workload  # 合并的工作量
+            
+            # 设置单元格格式：自动换行和边框
+            for col in range(1, 7):
+                cell = ws2.cell(current_row, col)
+                cell.border = thin_border
+                if col == 5:  # 功能描述列
+                    cell.alignment = Alignment(wrap_text=True, vertical='top')
+            
             current_row += 1
         
         # 添加合计行
@@ -631,12 +1200,33 @@ def update_wbs_document() -> None:
         # F列工作量总和
         ws2.cell(total_row, 6).value = d7_workload
         
+        # 为合计行添加边框
+        for col in range(1, 7):
+            cell = ws2.cell(total_row, col)
+            cell.border = thin_border
+        
         wb2.save(path2)
         
         print(f"已更新 {os.path.basename(path2)}:")
-        print(f"  - 填入 {len(matches)} 个功能点")
+        print(f"  - 原始匹配: {len(matches)} 个功能点")
+        print(f"  - 合并后: {len(sorted_groups)} 个功能点组")
+        print(f"  - 相同功能点码值的描述已合并并换行显示")
+        print(f"  - 功能描述添加了序号")
+        print(f"  - 为所有单元格添加了边框")
         print(f"  - 工作量总和: {d7_workload} 人天")
         print(f"  - 添加合计行")
+        
+        # 显示合并后的结果
+        print("\n合并后的结果预览:")
+        for i, ((level1, level2, level3), items) in enumerate(sorted_groups, 1):
+            descriptions = [desc for desc, _ in items]
+            total_workload = sum(workload for _, workload in items)
+            print(f"  {i}. {level1}->{level2}->{level3}")
+            print(f"     功能描述数量: {len(descriptions)} 个")
+            print(f"     总工作量: {total_workload} 人天")
+            for j, desc in enumerate(descriptions, 1):
+                print(f"       {j}) {desc[:50]}...")
+            print()
         
     except Exception as e:
         print(f"第十步执行失败：{e}")
@@ -650,6 +1240,10 @@ def main() -> None:
     if not requirement_name:
         print("未输入需求名字，程序结束。")
         return
+
+    # 0) 初始化附件1和附件2，清理之前的生成内容
+    initialize_attachment1()
+    initialize_attachment2()
 
     # 1) 批量重命名
     batch_rename(requirement_name)
@@ -680,6 +1274,9 @@ def main() -> None:
 
     # 10) 更新WBS文档
     update_wbs_document()
+
+    # 11) 生成项目文档并更新附件1
+    step11_generate_and_update_project_docs()
 
     print_step("全部步骤完成")
 
