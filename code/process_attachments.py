@@ -425,10 +425,55 @@ def summarize_requirement_content_and_update_h4() -> None:
 
 
 def load_function_codes() -> List[Tuple[str, str, str]]:
-    """加载一二三级功能点码值文件"""
+    """从附件3的COSMIC功能点拆分表中加载一二三级功能点码值"""
+    
+    # 首先尝试从附件3的sheet4加载
+    path3 = find_attachment_by_number(3)
+    if path3:
+        try:
+            wb3 = load_workbook(path3, data_only=True)
+            
+            # 查找COSMIC功能点拆分表工作表
+            sheet_name = "COSMIC功能点拆分表"
+            if sheet_name in wb3.sheetnames:
+                ws = wb3[sheet_name]
+                print(f"✅ 从附件3的{sheet_name}中加载功能点码值")
+                
+                codes = []
+                current_level1 = ""
+                current_level2 = ""
+                
+                # 从第4行开始读取数据（第3行是标题）
+                for row in range(4, ws.max_row + 1):
+                    level1 = ws.cell(row, 2).value  # B列 - 一级模块
+                    level2 = ws.cell(row, 3).value  # C列 - 二级模块
+                    level3 = ws.cell(row, 4).value  # D列 - 三级模块
+                    
+                    # 更新当前的一级、二级功能点
+                    if level1 and str(level1).strip():
+                        current_level1 = str(level1).strip()
+                    if level2 and str(level2).strip():
+                        current_level2 = str(level2).strip()
+                    
+                    if level3 and str(level3).strip():
+                        codes.append((current_level1, current_level2, str(level3).strip()))
+                
+                if codes:
+                    print(f"✅ 从附件3加载了 {len(codes)} 个功能点码值")
+                    return codes
+                else:
+                    print("⚠️  附件3的COSMIC功能点拆分表中未找到有效数据")
+            else:
+                print(f"⚠️  附件3中未找到{sheet_name}工作表")
+        
+        except Exception as e:
+            print(f"⚠️  从附件3加载功能点码值失败：{e}")
+    
+    # 备用方案：从独立的一二三级功能点.xlsx文件加载
+    print("🔄 尝试从备用文件加载功能点码值...")
     codes_path = os.path.join(os.path.dirname(__file__), "一二三级功能点.xlsx")
     if not os.path.exists(codes_path):
-        print(f"未找到功能点码值文件：{codes_path}")
+        print(f"❌ 未找到备用功能点码值文件：{codes_path}")
         return []
     
     try:
@@ -453,10 +498,11 @@ def load_function_codes() -> List[Tuple[str, str, str]]:
             if level3 and str(level3).strip():
                 codes.append((current_level1, current_level2, str(level3).strip()))
         
-        print(f"加载了 {len(codes)} 个功能点码值")
+        print(f"📁 从备用文件加载了 {len(codes)} 个功能点码值")
         return codes
+        
     except Exception as e:
-        print(f"加载功能点码值失败：{e}")
+        print(f"❌ 加载备用功能点码值文件失败：{e}")
         return []
 
 
@@ -741,10 +787,174 @@ def initialize_attachment2() -> None:
         raise
 
 
+def get_manual_summary() -> str:
+    """获取沙盘操作手册的精简摘要，使用缓存机制"""
+    
+    manual_path = os.path.join(os.path.dirname(__file__), "沙盘操作手册.md")
+    cache_path = os.path.join(os.path.dirname(__file__), "manual_summary_cache.txt")
+    
+    # 检查缓存是否存在且有效
+    if os.path.exists(cache_path) and os.path.exists(manual_path):
+        try:
+            # 比较文件修改时间
+            cache_mtime = os.path.getmtime(cache_path)
+            manual_mtime = os.path.getmtime(manual_path)
+            
+            if cache_mtime > manual_mtime:
+                # 缓存比手册新，直接使用缓存
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cached_summary = f.read().strip()
+                if cached_summary:
+                    print(f"✅ 使用缓存的手册摘要，长度：{len(cached_summary)} 字符")
+                    return cached_summary
+        except Exception as e:
+            print(f"⚠️  读取缓存失败：{e}")
+    
+    # 读取完整手册
+    try:
+        with open(manual_path, 'r', encoding='utf-8') as f:
+            manual_content = f.read()
+        print(f"📖 读取完整操作手册，长度：{len(manual_content)} 字符")
+    except FileNotFoundError:
+        print("⚠️  未找到沙盘操作手册文件")
+        return ""
+    except Exception as e:
+        print(f"⚠️  读取沙盘操作手册失败：{e}")
+        return ""
+    
+    # 生成摘要
+    print("🤖 正在生成手册摘要以优化token使用...")
+    summary_prompt = f"""请对以下沙盘操作手册内容进行精简摘要，保留核心业务信息和技术特点：
+
+{manual_content}
+
+要求：
+1. 保留系统的四大核心模块特点（市场洞察、任务策划、任务执行、任务后评估）
+2. 保留关键业务场景和功能特色
+3. 保留重要的角色和权限信息
+4. 压缩至2000字符以内
+5. 确保摘要仍能为项目文档生成提供足够的上下文
+
+请直接返回摘要内容，不要其他说明。"""
+
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        }
+        
+        data = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "user", "content": summary_prompt}
+            ],
+            "temperature": 0.2
+        }
+        
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=60)
+        response.raise_for_status()
+        
+        result = response.json()
+        summary = result['choices'][0]['message']['content'].strip()
+        
+        # 保存摘要到缓存
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                f.write(summary)
+            print(f"✅ 已生成并缓存手册摘要，长度：{len(summary)} 字符")
+        except Exception as e:
+            print(f"⚠️  保存摘要缓存失败：{e}")
+        
+        return summary
+        
+    except Exception as e:
+        print(f"⚠️  生成手册摘要失败：{e}，将使用原始手册")
+        return manual_content
+
+
+def clear_manual_cache() -> None:
+    """清理手册摘要缓存，强制重新生成"""
+    cache_path = os.path.join(os.path.dirname(__file__), "manual_summary_cache.txt")
+    
+    try:
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+            print("✅ 已清理手册摘要缓存，下次运行将重新生成")
+        else:
+            print("ℹ️  缓存文件不存在，无需清理")
+    except Exception as e:
+        print(f"⚠️  清理缓存失败：{e}")
+
+
 def generate_project_documentation(requirement_content: str) -> dict:
     """基于需求内容生成项目文档的四个部分"""
     
-    prompt = f"""基于以下具体需求内容，生成完整的项目文档。
+    # 获取手册摘要（使用缓存机制）
+    manual_summary = get_manual_summary()
+    
+    # 构建包含手册摘要的提示词
+    if manual_summary:
+        prompt = f"""请先学习以下沙盘操作手册的精简摘要，了解系统的功能特点和业务场景：
+
+=== 沙盘操作手册摘要 ===
+{manual_summary}
+
+=== 具体需求内容 ===
+{requirement_content}
+
+基于对沙盘系统的理解和以上具体需求内容，生成完整的项目文档。请确保生成的内容与沙盘系统的功能特点、业务场景、技术架构等高度契合。
+
+请生成以下四个部分的内容：
+
+1. 总体描述：
+   - 项目背景和概述
+   - 主要功能模块
+   - 技术架构特点
+
+2. 项目建设目标：
+   - 具体目标和预期效果
+   - 业务价值和意义
+   - 用户体验提升
+
+3. 项目建设必要性：
+   - 现有系统的不足
+   - 业务发展需要
+   - 技术升级必要性
+
+4. 存在问题：
+   - 当前系统存在的具体问题
+   - 用户使用痛点
+   - 技术或流程缺陷
+
+请确保生成的内容：
+- 与沙盘系统的"市场洞察、任务策划、任务执行、任务后评估"四大模块特点相契合
+- 体现政企沙盘&拓客助手系统的业务场景和功能特色
+- 结合具体需求内容，体现系统优化和功能提升的必要性
+- 每个部分应该有2-3个要点，每个要点100-200字
+
+返回格式：
+总体描述：
+1. ...
+2. ...
+3. ...
+
+项目建设目标：
+1. ...
+2. ...
+3. ...
+
+项目建设必要性：
+1. ...
+2. ...
+3. ...
+
+存在问题：
+1. ...
+2. ...
+3. ..."""
+    else:
+        # 备用提示词（当手册读取失败时使用）
+        prompt = f"""基于以下具体需求内容，生成完整的项目文档。
 
 具体需求内容：
 {requirement_content}
@@ -1016,6 +1226,51 @@ def update_attachment1_with_project_docs(project_docs: dict) -> None:
         traceback.print_exc()
 
 
+def update_attachment3_with_project_docs(project_docs: dict) -> None:
+    """更新附件3中的建设目标和建设必要性"""
+    print("更新附件3中的建设目标和建设必要性...")
+    
+    path3 = find_attachment_by_number(3)
+    if not path3:
+        print("未找到附件3文件")
+        return
+    
+    try:
+        wb3 = load_workbook(path3)
+        # 使用第一个工作表（系统功能架构图）
+        ws3 = wb3.active
+        
+        updated_cells = []
+        
+        # 更新A2单元格 - 建设目标
+        if "项目建设目标" in project_docs and project_docs["项目建设目标"].strip():
+            target_content = project_docs["项目建设目标"].strip()
+            ws3['A2'].value = target_content
+            updated_cells.append("A2(建设目标)")
+            print(f"✅ 已更新A2单元格：建设目标")
+        
+        # 更新A5单元格 - 建设必要性
+        if "项目建设必要性" in project_docs and project_docs["项目建设必要性"].strip():
+            necessity_content = project_docs["项目建设必要性"].strip()
+            ws3['A5'].value = necessity_content
+            updated_cells.append("A5(建设必要性)")
+            print(f"✅ 已更新A5单元格：建设必要性")
+        
+        if updated_cells:
+            # 保存文件
+            wb3.save(path3)
+            print(f"✅ 附件3更新成功，已更新：{', '.join(updated_cells)}")
+        else:
+            print("⚠️  没有找到可更新的内容")
+        
+    except PermissionError:
+        print("⚠️  附件3文件被占用，无法保存。请关闭Excel文档后重试")
+    except Exception as e:
+        print(f"⚠️  附件3更新失败：{e}")
+        import traceback
+        traceback.print_exc()
+
+
 def step11_generate_and_update_project_docs() -> None:
     """第十一步：生成项目文档并更新附件1"""
     print_step("第十一步：生成项目文档并更新附件1")
@@ -1060,6 +1315,9 @@ def step11_generate_and_update_project_docs() -> None:
         
         # 更新附件1
         update_attachment1_with_project_docs(project_docs)
+        
+        # 更新附件3
+        update_attachment3_with_project_docs(project_docs)
         
         print("\n✅ 第十一步完成：项目文档已生成并更新")
         
@@ -1234,6 +1492,159 @@ def update_wbs_document() -> None:
         raise
 
 
+def enhance_cosmic_data_groups_and_attributes(trigger_event: str, function_process: str, subprocess_desc: str, data_movement_type: str, existing_data_group: str = "", existing_data_attributes: str = "") -> tuple:
+    """基于COSMIC背景，调用大模型生成或完善数据组和数据属性"""
+    
+    prompt = f"""作为COSMIC软件度量专家，基于以下信息，为子过程生成合适的数据组和数据属性。
+
+COSMIC背景知识：
+- 数据组(Data Group)：逻辑上相关的数据属性集合，代表软件用户感兴趣的对象
+- 数据属性(Data Attributes)：构成数据组的具体属性字段
+- 数据移动类型：Entry(E)-数据进入, Exit(X)-数据退出, Read(R)-数据读取, Write(W)-数据写入
+
+当前子过程信息：
+- 触发事件：{trigger_event}
+- 功能过程：{function_process}
+- 子过程描述：{subprocess_desc}
+- 数据移动类型：{data_movement_type}
+
+现有数据组：{existing_data_group if existing_data_group else "无"}
+现有数据属性：{existing_data_attributes if existing_data_attributes else "无"}
+
+要求：
+1. 数据组名称要简洁、准确，体现业务含义
+2. 数据属性要具体、完整，包含该数据组的关键字段
+3. 确保与数据移动类型({data_movement_type})的语义一致
+4. 如果已有数据组和属性，请在此基础上优化完善
+5. 不同子过程的数据组和数据属性要保持差异性，避免重复
+
+请返回格式：
+数据组：[数据组名称]
+数据属性：[属性1、属性2、属性3、...]
+
+只返回数据组和数据属性，不要其他内容。"""
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+    }
+    
+    data = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    }
+    
+    try:
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        content = result['choices'][0]['message']['content'].strip()
+        
+        # 解析返回内容
+        lines = content.split('\n')
+        data_group = ""
+        data_attributes = ""
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('数据组：'):
+                data_group = line.replace('数据组：', '').strip()
+            elif line.startswith('数据属性：'):
+                data_attributes = line.replace('数据属性：', '').strip()
+        
+        return data_group, data_attributes
+        
+    except requests.exceptions.Timeout:
+        print(f"⚠️  API调用超时，使用默认值")
+        return existing_data_group or "默认数据组", existing_data_attributes or "默认属性"
+    except Exception as e:
+        print(f"⚠️  调用AI生成数据组和属性失败：{e}")
+        return existing_data_group or "默认数据组", existing_data_attributes or "默认属性"
+
+
+def step12_enhance_cosmic_data_groups_and_attributes() -> None:
+    """第十二步：基于COSMIC背景完善数据组和数据属性"""
+    print_step("第十二步：基于COSMIC背景完善数据组和数据属性")
+    
+    path3 = find_attachment_by_number(3)
+    if not path3:
+        print("未找到附件3文件")
+        return
+    
+    try:
+        wb3 = load_workbook(path3)
+        
+        # 查找COSMIC功能点拆分表工作表
+        sheet_name = "COSMIC功能点拆分表"
+        if sheet_name not in wb3.sheetnames:
+            print(f"未找到{sheet_name}工作表")
+            return
+        
+        ws = wb3[sheet_name]
+        print(f"✅ 找到{sheet_name}工作表")
+        
+        # 统计处理的行数
+        processed_count = 0
+        enhanced_count = 0
+        
+        # 从第4行开始处理数据
+        for row in range(4, ws.max_row + 1):
+            # 获取相关列的数据
+            trigger_event = ws.cell(row, 6).value or ""      # F列 - 触发事件
+            function_process = ws.cell(row, 7).value or ""   # G列 - 功能过程  
+            subprocess_desc = ws.cell(row, 8).value or ""    # H列 - 子过程描述
+            data_movement_type = ws.cell(row, 9).value or "" # I列 - 数据移动类型
+            existing_data_group = ws.cell(row, 10).value or ""     # J列 - 数据组
+            existing_data_attributes = ws.cell(row, 11).value or "" # K列 - 数据属性
+            
+            # 只处理有子过程描述和数据移动类型的行
+            if subprocess_desc.strip() and data_movement_type.strip():
+                processed_count += 1
+                print(f"\n处理第{row}行:")
+                print(f"  子过程描述: {subprocess_desc[:50]}...")
+                print(f"  数据移动类型: {data_movement_type}")
+                
+                # 调用AI生成或完善数据组和数据属性
+                new_data_group, new_data_attributes = enhance_cosmic_data_groups_and_attributes(
+                    trigger_event, function_process, subprocess_desc, data_movement_type,
+                    existing_data_group, existing_data_attributes
+                )
+                
+                # 检查是否有改进
+                if (new_data_group != existing_data_group or 
+                    new_data_attributes != existing_data_attributes):
+                    
+                    # 更新数据
+                    ws.cell(row, 10).value = new_data_group      # J列 - 数据组
+                    ws.cell(row, 11).value = new_data_attributes # K列 - 数据属性
+                    
+                    enhanced_count += 1
+                    print(f"  ✅ 已完善数据组: {new_data_group}")
+                    print(f"  ✅ 已完善数据属性: {new_data_attributes[:50]}...")
+                else:
+                    print(f"  ✓ 数据组和属性已完善，无需修改")
+        
+        # 保存文件
+        if enhanced_count > 0:
+            wb3.save(path3)
+            print(f"\n✅ 已保存附件3，共处理 {processed_count} 行，完善 {enhanced_count} 行")
+        else:
+            print(f"\n✓ 所有 {processed_count} 行数据组和属性都已完善，无需修改")
+        
+        print("✅ 第十二步完成：COSMIC数据组和数据属性已完善")
+        
+    except PermissionError:
+        print("⚠️  附件3文件被占用，无法保存。请关闭Excel文档后重试")
+    except Exception as e:
+        print(f"第十二步执行失败：{e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main() -> None:
     print_step("输入变量：统一替换的需求名")
     requirement_name = input("请输入需求名字（用于重命名与单元格填充）：").strip()
@@ -1277,6 +1688,9 @@ def main() -> None:
 
     # 11) 生成项目文档并更新附件1
     step11_generate_and_update_project_docs()
+
+    # 12) 完善COSMIC数据组和数据属性
+    step12_enhance_cosmic_data_groups_and_attributes()
 
     print_step("全部步骤完成")
 
